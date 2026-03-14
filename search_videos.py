@@ -248,6 +248,7 @@ async def main():
     parser.add_argument("--limit", type=int, default=20, help="Maximum number of results to return")
     parser.add_argument("--source", default="all", help="Source to search from: youtube, google, bilibili, all")
     parser.add_argument("--output", help="Output CSV file path")
+    parser.add_argument("--encoding", default="utf-8-sig", help="CSV encoding (e.g., utf-8-sig, gbk)")
 
     args = parser.parse_args()
 
@@ -293,7 +294,8 @@ async def main():
             print("-" * 80)
 
         if args.output:
-            with open(args.output, 'w', newline='', encoding='utf-8-sig') as csvfile:
+            encoding = args.encoding
+            with open(args.output, 'w', newline='', encoding=encoding, errors='replace') as csvfile:
                 fieldnames = ['赛事名称', '视频时长', '网址']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
