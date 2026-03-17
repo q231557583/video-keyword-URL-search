@@ -1,6 +1,8 @@
 import asyncio
 import re
 import argparse
+import urllib.parse
+import csv
 from playwright.async_api import async_playwright
 
 def parse_duration(duration_str):
@@ -40,8 +42,8 @@ def parse_duration(duration_str):
 
     return 0
 
-async def search_youtube(page, keyword):
-    url = f"https://www.youtube.com/results?search_query={keyword.replace(' ', '+')}"
+async def search_youtube(page, keyword, limit=20):
+    url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(keyword)}"
     try:
         await page.goto(url)
         await page.wait_for_selector("ytd-video-renderer", timeout=10000)
@@ -88,8 +90,8 @@ async def search_youtube(page, keyword):
         })
     return videos
 
-async def search_google_video(page, keyword):
-    url = f"https://www.google.com/search?q={keyword.replace(' ', '+')}&tbm=vid"
+async def search_google_video(page, keyword, limit=20):
+    url = f"https://www.google.com/search?q={urllib.parse.quote(keyword)}&tbm=vid"
     try:
         await page.goto(url)
     except:
@@ -140,11 +142,91 @@ async def search_google_video(page, keyword):
         })
     return videos
 
+async def search_bilibili(page, keyword, limit=20, min_duration=0):
+    # If min_duration > 60 mins (3600s), use duration=4 filter
+    duration_filter = "&duration=4" if min_duration >= 3600 else ""
+
+    videos = []
+    page_num = 1
+
+    while len(videos) < limit:
+        url = f"https://search.bilibili.com/all?keyword={urllib.parse.quote(keyword)}{duration_filter}&page={page_num}"
+        try:
+            await page.goto(url)
+            await page.wait_for_load_state("networkidle")
+            # Wait for either old or new Bilibili layout
+            try:
+                await page.wait_for_selector(".video-list-item, .bili-video-card, .video-item", timeout=10000)
+            except:
+                # If no videos found, check if it's just no results
+                no_results = await page.query_selector(".no-results, .v-no-res")
+                if no_results:
+                    break
+        except:
+            break
+
+        await page.evaluate("window.scrollBy(0, 2000)")
+        await asyncio.sleep(1)
+
+        cards = await page.query_selector_all(".video-list-item, .bili-video-card, .video-item")
+        if not cards:
+            break
+
+        initial_count = len(videos)
+        for card in cards:
+            if len(videos) >= limit:
+                break
+
+            title_elem = await card.query_selector("h3, .bili-video-card__info--tit")
+            if not title_elem:
+                continue
+            title = await title_elem.inner_text()
+
+            link_elem = await card.query_selector("a")
+            if not link_elem:
+                continue
+            href = await link_elem.get_attribute("href")
+            if not href:
+                continue
+            if href.startswith("//"):
+                video_url = f"https:{href}"
+            elif href.startswith("/"):
+                video_url = f"https://www.bilibili.com{href}"
+            else:
+                video_url = href
+
+            duration_elem = await card.query_selector(".duration, .bili-video-card__stats__duration")
+            duration_text = await duration_elem.inner_text() if duration_elem else ""
+            duration_sec = parse_duration(duration_text.strip())
+
+            if any(v['url'] == video_url for v in videos):
+                continue
+
+            videos.append({
+                "title": title.strip(),
+                "url": video_url,
+                "duration": duration_sec,
+                "duration_str": duration_text.strip(),
+                "source": "Bilibili"
+            })
+
+        if len(videos) == initial_count: # No new videos found
+            break
+        page_num += 1
+        if page_num > 5: # Safety limit
+            break
+
+    return videos
+
 async def main():
     parser = argparse.ArgumentParser(description="Search for videos with keyword and duration range.")
     parser.add_argument("--keyword", required=True, help="Search keyword")
     parser.add_argument("--min_duration", type=int, default=0, help="Minimum duration in seconds")
     parser.add_argument("--max_duration", type=int, default=None, help="Maximum duration in seconds")
+    parser.add_argument("--limit", type=int, default=20, help="Max number of results per source")
+    parser.add_argument("--source", default="all", choices=["youtube", "google", "bilibili", "all"], help="Search source")
+    parser.add_argument("--output", help="Output CSV file path")
+    parser.add_argument("--encoding", default="utf-8-sig", help="CSV encoding (e.g., utf-8-sig, gbk)")
 
     args = parser.parse_args()
 
@@ -152,12 +234,31 @@ async def main():
         browser = await p.chromium.launch()
         page = await browser.new_page()
 
-        print(f"Searching for '{args.keyword}'...")
+        print(f"Searching for '{args.keyword}' on {args.source}...")
 
-        yt_results = await search_youtube(page, args.keyword)
-        gv_results = await search_google_video(page, args.keyword)
+        seen_urls = set()
+        all_results = []
 
-        all_results = yt_results + gv_results
+        if args.source in ["youtube", "all"]:
+            yt_results = await search_youtube(page, args.keyword, limit=args.limit)
+            for res in yt_results:
+                if res["url"] not in seen_urls:
+                    all_results.append(res)
+                    seen_urls.add(res["url"])
+
+        if args.source in ["google", "all"]:
+            gv_results = await search_google_video(page, args.keyword, limit=args.limit)
+            for res in gv_results:
+                if res["url"] not in seen_urls:
+                    all_results.append(res)
+                    seen_urls.add(res["url"])
+
+        if args.source in ["bilibili", "all"]:
+            bi_results = await search_bilibili(page, args.keyword, limit=args.limit, min_duration=args.min_duration)
+            for res in bi_results:
+                if res["url"] not in seen_urls:
+                    all_results.append(res)
+                    seen_urls.add(res["url"])
 
         filtered_results = []
         for res in all_results:
@@ -176,6 +277,17 @@ async def main():
             print(f"Duration: {res['duration_str']} ({res['duration']}s)")
             print(f"URL: {res['url']}")
             print("-" * 80)
+
+        if args.output:
+            try:
+                with open(args.output, mode='w', encoding=args.encoding, newline='', errors='replace') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(['视频标题', '视频时长', '网址'])
+                    for res in filtered_results:
+                        writer.writerow([res['title'], res['duration_str'], res['url']])
+                print(f"\nResults exported to {args.output}")
+            except Exception as e:
+                print(f"\nError exporting to CSV: {e}")
 
         await browser.close()
 
