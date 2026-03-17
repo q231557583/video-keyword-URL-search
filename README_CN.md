@@ -4,10 +4,12 @@
 
 ## 功能特点
 
-- **多平台搜索**：支持 YouTube 和 Google Video 搜索。
-- **时长过滤**：可以指定最小和最大视频时长（秒）。
+- **多平台搜索**：支持 YouTube、Google Video 以及 **Bilibili** 搜索。
+- **智能去重**：自动过滤不同平台间的重复视频链接。
+- **时长过滤**：可以指定最小和最大视频时长（秒），支持 Bilibili 的长视频筛选。
+- **结果导出**：支持导出为 CSV 文件，并可自定义编码格式（如 `gbk`）以完美兼容 Excel。
 - **时长解析**：自动解析多种时长格式（如 `10:05`、`5 hours, 31 minutes` 等）。
-- **自动排序**：结果按视频时长升序排列。
+- **自动排序**：结果默认按视频时长升序排列。
 
 ## 安装步骤
 
@@ -31,6 +33,10 @@
 - `--keyword`: 搜索关键词（必填）。
 - `--min_duration`: 最小视频时长，单位为秒（默认为 0）。
 - `--max_duration`: 最大视频时长，单位为秒（可选）。
+- `--limit`: 每个平台的搜索结果上限（默认为 20）。
+- `--source`: 搜索来源，可选 `youtube`, `google`, `bilibili`, `all`（默认为 `all`）。
+- `--output`: 导出 CSV 文件的路径。
+- `--encoding`: CSV 文件的编码，例如 `utf-8-sig` 或 `gbk`（默认为 `utf-8-sig`）。
 
 ### 示例
 
@@ -42,6 +48,11 @@
 2. **搜索关键词 "python tutorial"，时长至少 10 分钟（600秒）**：
    ```bash
    python3 search_videos.py --keyword "python tutorial" --min_duration 600
+   ```
+
+3. **从所有平台搜索 "cooking"，并将结果导出为 Excel 兼容的 CSV**：
+   ```bash
+   python3 search_videos.py --keyword "cooking" --output results.csv --encoding gbk
    ```
 
 ## 开发者说明
